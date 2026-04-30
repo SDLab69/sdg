@@ -2,21 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  color: var(--foreground);
-  background: var(--background);
+  background-color: #FAF7F2;
+  color: #1A1410;
   font-family: Arial, Helvetica, sans-serif;
 }
 
@@ -24,4 +12,49 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* ── Dual range slider (Clients filter panel) ───────────────────────────── */
+.range-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: none;
+  background: transparent;
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  outline: none;
+}
+.range-thumb::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 6px;
+}
+.range-thumb::-moz-range-track {
+  background: transparent;
+  height: 6px;
+  border: none;
+}
+.range-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background-color: #8B3220;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  margin-top: -5px;
+}
+.range-thumb::-moz-range-thumb {
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background-color: #8B3220;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
 }
