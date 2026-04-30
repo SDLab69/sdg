@@ -1,36 +1,39 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# sdg
 
-## Getting Started
+Web app for a small dog grooming business. Built as a personal project that's also a portfolio piece — a real tool for a real friend's business, replacing a handwritten paper calendar with something digital.
 
-First, run the development server:
+The friend manages around 400 client households and tracks two recurring services per household: a brush + nail trim every 6 months, and a full groom every 12 months. The app preserves her existing operating logic exactly — scheduling unit is the household (not the pet), business runs Monday through Friday, due alerts auto-trigger outreach 6 weeks ahead unless acted on. No surprises, no workflow changes she didn't ask for.
 
-```bash
+## Features
+
+- Calendar view with drag-and-drop appointment scheduling
+- Per-household profile with full pet roster, service history, and upcoming due dates
+- Client list with natural-language filtering (Anthropic API, behind a small filter schema)
+- Ad hoc services view for one-off appointments outside the recurring cycle
+- PWA-ready for iPhone home screen installation
+
+## Stack
+
+- Next.js 14 (App Router) on Node 22 LTS
+- TypeScript, Tailwind CSS
+- Supabase (Postgres, Auth, RLS) for data
+- Anthropic API for LLM-powered filtering
+- Playwright for end-to-end tests
+- Docker + Caddy on a Hetzner VPS for hosting
+
+## Running locally
+
+Requires Node 22 (a \`.nvmrc\` is checked in).
+
+\`\`\`bash
+nvm use            # picks up Node 22 from .nvmrc
+npm install
+cp .env.example .env.local   # then fill in real values
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+\`\`\`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The app expects a Supabase project with the schema in \`supabase/migrations/\` applied. Production data is seeded via Supabase MCP rather than committed to this repo, so a fresh local checkout will start with an empty database.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Status
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Active development. The calendar and household profile are working; the client list and ad hoc views are in progress. Deployed at [sdg.sdlab.ai](https://sdg.sdlab.ai).
