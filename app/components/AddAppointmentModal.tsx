@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { todayET, todayETString } from "@/lib/utils/dates";
+import { SERVICE_LABELS } from "@/lib/terms";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,17 +20,9 @@ type ServiceType =
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SERVICE_OPTIONS: { value: ServiceType; label: string }[] = [
-  { value: "brush",             label: "Brush" },
-  { value: "bath",              label: "Bath" },
-  { value: "nail_trim",         label: "Nail Trim" },
-  { value: "ear_cleaning",      label: "Ear Cleaning" },
-  { value: "teeth_brushing",    label: "Teeth Brushing" },
-  { value: "deshed_treatment",  label: "De-shed Treatment" },
-  { value: "skunk_treatment",   label: "Skunk Treatment" },
-  { value: "paw_pad_trim",      label: "Paw & Pad Trim" },
-  { value: "sanitary_trim",     label: "Sanitary Trim" },
-];
+const SERVICE_OPTIONS: { value: ServiceType; label: string }[] = (
+  ["brush", "bath", "nail_trim", "ear_cleaning", "teeth_brushing", "deshed_treatment", "skunk_treatment", "paw_pad_trim", "sanitary_trim"] as ServiceType[]
+).map((value) => ({ value, label: SERVICE_LABELS[value] }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
