@@ -54,7 +54,7 @@ const HOUSEHOLD_SELECT = `
     temperament,
     medical_flags
   ),
-  service_clocks (
+  service_clocks!inner (
     last_visit,
     last_full_groom,
     next_brush_due,
