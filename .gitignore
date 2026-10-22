@@ -38,3 +38,7 @@ next-env.d.ts
 # playwright
 /test-results/
 /playwright-report/
+
+# next-pwa build output
+/public/sw.js
+/public/workbox-*.js

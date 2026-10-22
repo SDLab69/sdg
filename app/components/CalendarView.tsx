@@ -5,10 +5,22 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import NavBar from "./NavBar";
 import { todayET } from "@/lib/utils/dates";
+import { SERVICE_LABELS } from "@/lib/terms";
+import OutreachPanel, { STATE_STYLE, type PanelOutreach } from "./OutreachPanel";
+import ScheduleList from "./ScheduleList";
+import {
+  DRAFT_COLUMNS,
+  REVIEW_STATE_LABEL,
+  draftKey,
+  reviewState,
+  type ServiceKind,
+  type OutreachDraft,
+  type ReviewState,
+} from "@/lib/engagement";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Household = { id: string; name: string; is_vip: boolean };
+type Household = { id: string; name: string; is_vip: boolean; staff_name: string | null; staff_role: string | null };
 
 type ServiceClock = {
   id: string;
@@ -34,11 +46,13 @@ type AdhocConfirmed = {
   household_id: string;
   service_type: string;
   outreach_date: string;
+  task_owner: string | null;
+  task_role: string | null;
 };
 
 type EventKind = "full_groom_due" | "brush_due" | "appointment" | "adhoc_due";
 
-type CalEvent = {
+export type CalEvent = {
   key: string;
   dbId: string;
   householdId: string;
@@ -50,6 +64,13 @@ type CalEvent = {
   time?: string;
   serviceType?: string;
   clockField?: "full_groom_outreach_trigger" | "brush_outreach_trigger";
+  taskOwner?: string | null;   // ad hoc requests: who picked up the task
+  taskRole?: string | null;
+  staffName?: string | null;   // the client's assigned staff member
+  staffRole?: string | null;
+  source?: ServiceKind;   // recurring services only
+  sourceId?: string;
+  review?: ReviewState;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -59,23 +80,12 @@ const MONTHS_SHORT = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-const SERVICE_ABBREV: Record<string, string> = {
-  full_groom: "Full Groom", brush_nail: "Brush & Nail", brush: "Brush",
-  bath: "Bath", nail_trim: "Nail Trim", ear_cleaning: "Ear Cleaning",
-  teeth_brushing: "Teeth Brushing", deshed_treatment: "Deshed",
-  skunk_treatment: "Skunk Treatment", paw_pad_trim: "Paw Trim",
-  sanitary_trim: "Sanitary Trim",
-};
-
-const ADHOC_SERVICE_LABEL: Record<string, string> = {
-  brush: "Brush", bath: "Bath", nail_trim: "Nail Trim",
-  ear_cleaning: "Ear Cleaning", teeth_brushing: "Teeth Brushing",
-  deshed_treatment: "De-shed", skunk_treatment: "Skunk Treatment",
-  paw_pad_trim: "Paw Trim", sanitary_trim: "Sanitary Trim",
-};
+const SERVICE_ABBREV = SERVICE_LABELS;
+const ADHOC_SERVICE_LABEL = SERVICE_LABELS;
 
 const KIND_ORDER: Record<EventKind, number> = {
-  full_groom_due: 0, adhoc_due: 0, brush_due: 1, appointment: 2,
+  // Full grooms, brush & nails and ad hoc requests interleave by client name
+  full_groom_due: 0, adhoc_due: 0, brush_due: 0, appointment: 1,
 };
 
 const MAX_VISIBLE = 3;
@@ -175,6 +185,7 @@ export default function CalendarView() {
   const [clocks, setClocks] = useState<ServiceClock[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [adhocConfirmed, setAdhocConfirmed] = useState<AdhocConfirmed[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, OutreachDraft>>({});
   const [loading, setLoading] = useState(true);
 
   // ── View ─────────────────────────────────────────────────────────────────────
@@ -199,6 +210,15 @@ export default function CalendarView() {
 
   // ── Modal ────────────────────────────────────────────────────────────────────
   const [modalEvent, setModalEvent] = useState<CalEvent | null>(null);
+  const [panelEvent, setPanelEvent] = useState<CalEvent | null>(null);
+  const [view, setView] = useState<"calendar" | "list">("calendar");
+  const [horizonDays, setHorizonDays] = useState(30);
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
+
+  function openEvent(ev: CalEvent) {
+    if (ev.source) setPanelEvent(ev);
+    else setModalEvent(ev);
+  }
 
   // ── Optimize calendar ────────────────────────────────────────────────────────
   const [showOptimizeModal, setShowOptimizeModal] = useState(false);
@@ -241,7 +261,7 @@ export default function CalendarView() {
       const rows = (data as unknown[]) ?? [];
       showToast(rows.length === 0
         ? "Calendar gaps are already filled — no changes needed"
-        : `${rows.length} client${rows.length === 1 ? "" : "s"} pulled forward to fill light weeks`);
+        : `${rows.length} household${rows.length === 1 ? "" : "s"} pulled forward to fill light weeks`);
     }
     await loadData();
   }
@@ -253,6 +273,8 @@ export default function CalendarView() {
   const isDraggingRef = useRef(false);
   const dragOverDayRef = useRef<string | null>(null);
 
+  const openEventRef = useRef<(ev: CalEvent) => void>(() => {});
+  openEventRef.current = openEvent;
   const dropHandlerRef = useRef<(date: string, ev: CalEvent) => void>(() => {});
   dropHandlerRef.current = (targetDate: string, ev: CalEvent) => {
     if (ev.kind === "adhoc_due") {
@@ -272,19 +294,21 @@ export default function CalendarView() {
   // ── Fetch ────────────────────────────────────────────────────────────────────
   async function loadData() {
     setLoading(true);
-    const [{ data: hh }, { data: sc }, { data: ap }, { data: ac }] = await Promise.all([
-      supabase.from("households").select("id, name, is_vip"),
+    const [{ data: hh }, { data: sc }, { data: ap }, { data: ac }, { data: dr }] = await Promise.all([
+      supabase.from("households").select("id, name, is_vip, staff_name, staff_role"),
       supabase.from("service_clocks").select("id, household_id, next_brush_due, next_full_groom_due, brush_outreach_trigger, full_groom_outreach_trigger"),
       supabase.from("appointments").select("id, household_id, date, time, service_type, notes, duration"),
       supabase.from("adhoc_requests")
-        .select("id, household_id, service_type, outreach_date")
+        .select("id, household_id, service_type, outreach_date, task_owner, task_role")
         .eq("status", "confirmed")
         .not("outreach_date", "is", null),
+      supabase.from("outreach_drafts").select(DRAFT_COLUMNS),
     ]);
     setHouseholds(hh ?? []);
     setClocks(sc ?? []);
     setAppointments(ap ?? []);
     setAdhocConfirmed((ac as AdhocConfirmed[]) ?? []);
+    setDrafts(Object.fromEntries(((dr as OutreachDraft[]) ?? []).map((d) => [draftKey(d.source, d.source_id), d])));
     setLoading(false);
   }
 
@@ -334,7 +358,7 @@ export default function CalendarView() {
         const target = dragOverDayRef.current;
         if (target) dropHandlerRef.current(target, ev);
       } else if (dist < DRAG_THRESHOLD) {
-        setModalEvent(ev);
+        openEventRef.current(ev);
       }
       if (ghostRef.current) { document.body.removeChild(ghostRef.current); ghostRef.current = null; }
       isDraggingRef.current = false;
@@ -367,19 +391,22 @@ export default function CalendarView() {
           result.push({ key: `fg-${clock.id}`, dbId: clock.id, householdId: hh.id,
             householdName: hh.name, isVip: hh.is_vip, kind: "full_groom_due",
             date: clock.full_groom_outreach_trigger ?? clock.next_full_groom_due,
-            dueDate: clock.next_full_groom_due, clockField: "full_groom_outreach_trigger" });
+            dueDate: clock.next_full_groom_due, clockField: "full_groom_outreach_trigger",
+            source: "full_groom", sourceId: clock.id });
         if (clock.next_brush_due)
           result.push({ key: `br-${clock.id}`, dbId: clock.id, householdId: hh.id,
             householdName: hh.name, isVip: hh.is_vip, kind: "brush_due",
             date: clock.brush_outreach_trigger ?? clock.next_brush_due,
-            dueDate: clock.next_brush_due, clockField: "brush_outreach_trigger" });
+            dueDate: clock.next_brush_due, clockField: "brush_outreach_trigger",
+            source: "brush_nail", sourceId: clock.id });
       }
       for (const ar of adhocConfirmed) {
         const hh = hhMap[ar.household_id];
         if (!hh) continue;
         result.push({ key: `adhoc-${ar.id}`, dbId: ar.id, householdId: hh.id,
           householdName: hh.name, isVip: hh.is_vip, kind: "adhoc_due",
-          date: ar.outreach_date, serviceType: ar.service_type });
+          date: ar.outreach_date, serviceType: ar.service_type,
+          taskOwner: ar.task_owner, taskRole: ar.task_role });
       }
     }
     if (showAppts) {
@@ -391,8 +418,25 @@ export default function CalendarView() {
           date: appt.date, time: appt.time.slice(0, 5), serviceType: appt.service_type });
       }
     }
+    for (const ev of result) {
+      const hh = hhMap[ev.householdId];
+      ev.staffName = hh?.staff_name ?? null;
+      ev.staffRole = hh?.staff_role ?? null;
+      if (!ev.source || !ev.sourceId) continue;
+      ev.review = reviewState({
+        outreachDate: ev.date, today: todayStr,
+        draft: drafts[draftKey(ev.source, ev.sourceId)],
+      });
+    }
     return result;
-  }, [clocks, appointments, adhocConfirmed, hhMap, showDue, showAppts]);
+  }, [clocks, appointments, adhocConfirmed, drafts, hhMap, showDue, showAppts, todayStr]);
+
+  const reviewQueue = useMemo(
+    () => events
+      .filter((ev) => ev.review === "needs_review")
+      .sort((a, b) => a.date.localeCompare(b.date) || a.householdName.localeCompare(b.householdName)),
+    [events]
+  );
 
   const eventsByDay = useMemo(() => {
     const map: Record<string, CalEvent[]> = {};
@@ -462,7 +506,7 @@ export default function CalendarView() {
       <div className="bg-white border-b border-border px-6 h-12 flex items-center gap-4 shrink-0">
         {/* Date range label */}
         <h1 className="text-base font-bold text-ink w-52 shrink-0 tabular-nums">
-          {headerLabel}
+          {view === "list" ? `Next ${horizonDays} days` : headerLabel}
         </h1>
 
         {/* Client search */}
@@ -490,8 +534,23 @@ export default function CalendarView() {
           )}
         </div>
 
-        {/* Week navigation */}
-        <div className="flex items-center gap-2 ml-auto">
+        {/* View toggle */}
+        <div className="inline-flex rounded border border-border overflow-hidden ml-auto">
+          {(["calendar", "list"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`px-3 py-1 text-[11px] font-bold tracking-wide transition-colors ${
+                view === v ? "bg-ink text-white" : "bg-white text-ink-2 hover:bg-cream"
+              }`}
+            >
+              {v === "calendar" ? "CALENDAR" : "LIST"}
+            </button>
+          ))}
+        </div>
+
+        {/* Week navigation — grid only */}
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setShowOptimizeModal(true)}
             disabled={optimizing}
@@ -505,18 +564,22 @@ export default function CalendarView() {
             </svg>
             {optimizing ? "OPTIMIZING…" : "OPTIMIZE CALENDAR"}
           </button>
-          <button onClick={goToday}
-            className="px-3 py-1 text-[11px] font-bold tracking-wide border border-border rounded text-ink hover:bg-cream-2 transition-colors">
-            TODAY
-          </button>
-          <button onClick={prevWeek}
-            className="w-7 h-7 flex items-center justify-center border border-border rounded text-ink hover:bg-cream-2 transition-colors text-base leading-none">
-            ‹
-          </button>
-          <button onClick={nextWeek}
-            className="w-7 h-7 flex items-center justify-center border border-border rounded text-ink hover:bg-cream-2 transition-colors text-base leading-none">
-            ›
-          </button>
+          {view === "calendar" && (
+            <>
+              <button onClick={goToday}
+                className="px-3 py-1 text-[11px] font-bold tracking-wide border border-border rounded text-ink hover:bg-cream-2 transition-colors">
+                TODAY
+              </button>
+              <button onClick={prevWeek}
+                className="w-7 h-7 flex items-center justify-center border border-border rounded text-ink hover:bg-cream-2 transition-colors text-base leading-none">
+                ‹
+              </button>
+              <button onClick={nextWeek}
+                className="w-7 h-7 flex items-center justify-center border border-border rounded text-ink hover:bg-cream-2 transition-colors text-base leading-none">
+                ›
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -536,9 +599,43 @@ export default function CalendarView() {
           <span className="w-3 h-3 rounded-sm bg-sage-pale border border-sage/40 inline-block" />
           Scheduled appointments
         </button>
+
+        <div className="ml-auto flex items-center gap-4">
+          <div className="flex items-center gap-3 text-[11px] text-ink-3">
+            {(["needs_review", "approved", "skipped"] as ReviewState[]).map((st) => (
+              <span key={st} className="flex items-center gap-1.5">
+                <ReviewMarker state={st} />
+                {REVIEW_STATE_LABEL[st]}
+              </span>
+            ))}
+          </div>
+          <button onClick={() => { setView("list"); setNeedsReviewOnly(true); }}
+            className="flex items-center gap-2 px-3 py-1 rounded text-[11px] font-bold tracking-wide border transition-colors"
+            style={{ backgroundColor: STATE_STYLE.needs_review.bg, color: STATE_STYLE.needs_review.fg, borderColor: "#B87A2840" }}>
+            REVIEW QUEUE
+            <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-amber text-white text-[10px]">
+              {reviewQueue.length}
+            </span>
+          </button>
+        </div>
       </div>
 
+      {/* ── List view ────────────────────────────────────────────────────────── */}
+      {!loading && view === "list" && (
+        <ScheduleList
+          events={events}
+          drafts={drafts}
+          todayStr={todayStr}
+          horizonDays={horizonDays}
+          needsReviewOnly={needsReviewOnly}
+          onHorizonChange={setHorizonDays}
+          onNeedsReviewOnlyChange={setNeedsReviewOnly}
+          onOpen={openEvent}
+        />
+      )}
+
       {/* ── Calendar grid ────────────────────────────────────────────────────── */}
+      {view === "calendar" && (
       <div className="flex-1 p-4 overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center h-64 text-ink-3 text-sm">Loading…</div>
@@ -639,7 +736,7 @@ export default function CalendarView() {
                                       isDraggingRef.current = false;
                                     }
                                   : undefined}
-                                onClick={!isDraggable ? () => setModalEvent(ev) : undefined}
+                                onClick={!isDraggable ? () => openEvent(ev) : undefined}
                                 style={ev.kind === "adhoc_due" ? {
                                   backgroundColor: ADHOC_STYLE.bg,
                                   borderLeftColor: ADHOC_STYLE.border,
@@ -674,6 +771,8 @@ export default function CalendarView() {
                                 >
                                   {ev.householdName}
                                 </span>
+
+                                {ev.review && <ReviewMarker state={ev.review} />}
 
                                 {ev.kind === "appointment" ? (
                                   <>
@@ -721,6 +820,7 @@ export default function CalendarView() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Chip detail modal ────────────────────────────────────────────────── */}
       {modalEvent && (
@@ -768,12 +868,33 @@ export default function CalendarView() {
                       </span>
                     </div>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-[10px] font-semibold text-ink-3 uppercase tracking-wide w-24 shrink-0">Service due</span>
+                      <span className="text-[10px] font-semibold text-ink-3 uppercase tracking-wide w-24 shrink-0">Due date</span>
                       <span className="text-sm text-ink-2">
                         {new Date(modalEvent.dueDate + "T00:00:00").toLocaleDateString("en-US",
                           { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
                       </span>
                     </div>
+                  </div>
+                ) : modalEvent.kind === "adhoc_due" ? (
+                  <div className="space-y-2">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-[10px] font-semibold text-ink-3 uppercase tracking-wide w-24 shrink-0">Follow-up date</span>
+                      <span className="text-sm text-ink-2">
+                        {new Date(modalEvent.date + "T00:00:00").toLocaleDateString("en-US",
+                          { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
+                      </span>
+                    </div>
+                    {modalEvent.taskOwner && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[10px] font-semibold text-ink-3 uppercase tracking-wide w-24 shrink-0">Handled by</span>
+                        <span className="text-sm text-ink-2">
+                          {modalEvent.taskOwner}{modalEvent.taskRole ? ` (${modalEvent.taskRole})` : ""}
+                        </span>
+                      </div>
+                    )}
+                    <p className="text-[12px] text-ink-3 leading-snug bg-cream rounded px-3 py-2">
+                      Walk-in request. Ad hoc services are handled in person, so there&apos;s no email to review.
+                    </p>
                   </div>
                 ) : (
                   <p className="text-sm text-ink-2">
@@ -800,6 +921,34 @@ export default function CalendarView() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Outreach review panel ──────────────────────────────────────────── */}
+      {panelEvent && panelEvent.source && panelEvent.sourceId && panelEvent.dueDate && (
+        <OutreachPanel
+          outreach={{
+            householdId: panelEvent.householdId,
+            householdName: panelEvent.householdName,
+            isVip: panelEvent.isVip,
+            source: panelEvent.source,
+            sourceId: panelEvent.sourceId,
+            outreachDate: panelEvent.date,
+            dueDate: panelEvent.dueDate,
+            staffName: panelEvent.staffName,
+            staffRole: panelEvent.staffRole,
+          } satisfies PanelOutreach}
+          draft={drafts[draftKey(panelEvent.source, panelEvent.sourceId)] ?? null}
+          today={todayStr}
+          onDraftChange={(d) => setDrafts((prev) => ({ ...prev, [draftKey(d.source, d.source_id)]: d }))}
+          onOutreachDateChange={(sourceId, source, ymd) => {
+            const field = source === "full_groom" ? "full_groom_outreach_trigger" : "brush_outreach_trigger";
+            setClocks((prev) => prev.map((c) => (c.id === sourceId ? { ...c, [field]: ymd } : c)));
+            setPanelEvent((prev) => (prev ? { ...prev, date: ymd } : prev));
+            showToast(`Outreach moved to ${new Date(ymd + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`);
+          }}
+          onClose={() => setPanelEvent(null)}
+          onViewProfile={() => { router.push(`/clients/${panelEvent.householdId}?from=calendar`); setPanelEvent(null); }}
+        />
       )}
 
       {/* ── Optimize calendar modal ──────────────────────────────────────────── */}
@@ -864,7 +1013,7 @@ export default function CalendarView() {
                     optimizeMode === "fill" ? "text-terra" : "text-ink"
                   }`}>Fill light weeks</p>
                   <p className="text-[12px] text-ink-3 leading-snug">
-                    Pull outreach forward for clients in light weeks, starting engagement earlier to fill gaps in the schedule.
+                    Pull outreach forward for clients in light weeks, starting outreach earlier to fill gaps in the schedule.
                   </p>
                 </button>
               </div>
@@ -892,4 +1041,49 @@ export default function CalendarView() {
       )}
     </div>
   );
+}
+
+// ─── Review marker ────────────────────────────────────────────────────────────
+
+function ReviewMarker({ state }: { state: ReviewState }) {
+  const common = "w-4 h-4 rounded flex items-center justify-center shrink-0";
+  switch (state) {
+    case "needs_review":
+      return (
+        <span className={common} style={{ backgroundColor: "#B87A28" }} title="Reminder email needs review">
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
+            <path d="M6.8 1.2l2 2L3.5 8.5H1.5v-2z" stroke="#fff" strokeWidth="1.3" strokeLinejoin="round" />
+          </svg>
+        </span>
+      );
+    case "approved":
+    case "sent_ai":
+      return (
+        <span className={common} style={{ backgroundColor: "#2D5E32" }} title={state === "approved" ? "AI email approved" : "Sent — approved AI draft"}>
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
+            <path d="M1.8 5.2l2.1 2.1 4.3-4.6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      );
+    case "skipped":
+    case "skipped_past":
+      return (
+        <span className={common} style={{ backgroundColor: "#fff", border: "1px solid #9A8B7E" }} title="Skipped this cycle">
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
+            <path d="M2 8L8 2" stroke="#9A8B7E" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </span>
+      );
+    case "sent_template":
+      return (
+        <span className={common} style={{ backgroundColor: "#fff", border: "1px solid #6B5D52" }} title="Sent — standard template">
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
+            <rect x="1.3" y="2.3" width="7.4" height="5.4" rx="0.8" stroke="#6B5D52" strokeWidth="1.1" />
+            <path d="M1.6 2.8L5 5.3l3.4-2.5" stroke="#6B5D52" strokeWidth="1.1" />
+          </svg>
+        </span>
+      );
+    default:
+      return null;
+  }
 }

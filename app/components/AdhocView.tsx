@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import NavBar from "./NavBar";
-import { todayET, todayETString } from "@/lib/utils/dates";
+import { SERVICE_LABELS } from "@/lib/terms";
+import AdhocRequestModal from "./AdhocRequestModal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,17 +35,6 @@ type Toast = { message: string; variant: "success" | "error" };
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const SERVICE_LABELS: Record<ServiceType, string> = {
-  brush: "Brush",
-  bath: "Bath",
-  nail_trim: "Nail Trim",
-  ear_cleaning: "Ear Cleaning",
-  teeth_brushing: "Teeth Brushing",
-  deshed_treatment: "De-shed Treatment",
-  skunk_treatment: "Skunk Treatment",
-  paw_pad_trim: "Paw Pad Trim",
-  sanitary_trim: "Sanitary Trim",
-};
 
 type ServiceAccent = {
   headerBg: string;  // header background
@@ -79,23 +69,6 @@ const SERVICE_TYPE_ORDER: ServiceType[] = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function toYMD(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/** Returns YYYY-MM-DD for the next Mon–Fri day (starting tomorrow) in ET. */
-function nextWeekday(): string {
-  const d = todayET();
-  d.setDate(d.getDate() + 1);
-  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
-  return toYMD(d);
-}
-
-/** Returns YYYY-MM-DD for today in ET (used as min for date input). */
-function todayYMD(): string {
-  return todayETString();
-}
-
 function formatDate(ymd: string | null): string {
   if (!ymd) return "No date";
   return new Date(ymd + "T00:00:00").toLocaleDateString("en-US", {
@@ -113,9 +86,7 @@ export default function AdhocView() {
 
   const [requests, setRequests] = useState<AdhocRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [confirmTarget, setConfirmTarget] = useState<AdhocRequest | null>(null);
-  const [selectedDate, setSelectedDate] = useState(nextWeekday());
-  const [submitting, setSubmitting] = useState(false);
+  const [engageTarget, setEngageTarget] = useState<AdhocRequest | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -164,34 +135,12 @@ export default function AdhocView() {
     }
   }
 
-  // ── Confirm ───────────────────────────────────────────────────────────────
+  // ── Engage ────────────────────────────────────────────────────────────────
 
-  function openConfirm(req: AdhocRequest) {
-    setConfirmTarget(req);
-    setSelectedDate(nextWeekday());
-  }
-
-  async function handleConfirmSubmit() {
-    if (!confirmTarget) return;
-    setSubmitting(true);
-
-    const { error } = await supabase
-      .from("adhoc_requests")
-      .update({ status: "confirmed", outreach_date: selectedDate })
-      .eq("id", confirmTarget.id);
-
-    setSubmitting(false);
-
-    if (error) {
-      showToast("Failed to schedule outreach.", "error");
-      return;
-    }
-
-    setRequests((prev) => prev.filter((r) => r.id !== confirmTarget.id));
-    showToast(
-      `Outreach scheduled for ${formatDate(selectedDate)} — ${SERVICE_LABELS[confirmTarget.service_type]}.`
-    );
-    setConfirmTarget(null);
+  function handleApplied(message: string) {
+    setRequests((prev) => prev.filter((r) => r.id !== engageTarget?.id));
+    setEngageTarget(null);
+    showToast(message);
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -255,7 +204,7 @@ export default function AdhocView() {
                   key={type}
                   type={type}
                   requests={reqs}
-                  onConfirm={openConfirm}
+                  onConfirm={setEngageTarget}
                   onDecline={handleDecline}
                   onNavigate={(id) => router.push(`/clients/${id}?from=adhoc`)}
                 />
@@ -265,88 +214,13 @@ export default function AdhocView() {
         </div>
       </div>
 
-      {/* ── Confirm modal ───────────────────────────────────────────────────── */}
-      {confirmTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
-            onClick={() => !submitting && setConfirmTarget(null)}
-          />
-          <div className="relative bg-white rounded-xl border border-border shadow-xl w-full max-w-sm">
-            {/* Modal header */}
-            <div className="px-5 py-4 border-b border-border">
-              <p className="text-[10px] font-bold tracking-widest text-ink-3 uppercase mb-1">
-                Schedule Appointment
-              </p>
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-ink text-base">
-                  {confirmTarget.households?.name ?? "Unknown client"}
-                </p>
-                {confirmTarget.households?.is_vip && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-pale text-amber border border-amber/30">
-                    ◆ VIP
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Modal body */}
-            <div className="px-5 py-4 space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-ink-3">Service</span>
-                <span className="font-semibold text-ink">
-                  {SERVICE_LABELS[confirmTarget.service_type]}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-ink-3">Requested date</span>
-                <span className="font-semibold text-ink">
-                  {formatDate(confirmTarget.requested_date)}
-                </span>
-              </div>
-              {confirmTarget.note && (
-                <div className="text-sm">
-                  <p className="text-ink-3 mb-1">Notes</p>
-                  <p className="text-ink-2 italic bg-cream rounded px-3 py-2 text-xs leading-relaxed">
-                    {confirmTarget.note}
-                  </p>
-                </div>
-              )}
-
-              {/* Date picker */}
-              <div className="pt-1">
-                <label className="text-[10px] font-bold tracking-widest text-ink-3 uppercase block mb-1.5">
-                  Schedule outreach for
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  min={todayYMD()}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm text-ink bg-white focus:outline-none focus:ring-2 focus:ring-terra/30 focus:border-terra transition"
-                />
-              </div>
-            </div>
-
-            {/* Modal footer */}
-            <div className="px-5 py-4 border-t border-border flex gap-2">
-              <button
-                onClick={() => setConfirmTarget(null)}
-                disabled={submitting}
-                className="flex-1 py-2 text-sm font-semibold border border-border rounded-lg text-ink-2 hover:bg-cream transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmSubmit}
-                disabled={submitting || !selectedDate}
-                className="flex-1 py-2 text-sm font-semibold bg-sage text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {submitting ? "Scheduling…" : "Schedule outreach"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ── Ad hoc request modal ─────────────────────────────────── */}
+      {engageTarget && (
+        <AdhocRequestModal
+          request={engageTarget}
+          onClose={() => setEngageTarget(null)}
+          onApplied={handleApplied}
+        />
       )}
 
       {/* ── Toast ───────────────────────────────────────────────────────────── */}
@@ -479,7 +353,7 @@ function RequestRow({
       <div className="flex items-center gap-1 shrink-0 mt-0.5">
         <button
           onClick={() => onConfirm(req)}
-          title="Confirm"
+          title="Take it"
           className="w-6 h-6 flex items-center justify-center rounded bg-sage-pale text-sage hover:bg-sage hover:text-white transition-colors text-xs font-bold"
         >
           ✓

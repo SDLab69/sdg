@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import NewClientModal from "./NewClientModal";
+import { BRAND } from "@/lib/terms";
 
 const NAV_ITEMS = [
   { label: "CALENDAR", href: "/" },
@@ -87,12 +88,12 @@ export default function NavBar() {
           </button>
 
           {/* Brand — centered absolutely */}
-          <div className="absolute left-1/2 -translate-x-1/2 pointer-events-none select-none">
+          <div className="absolute left-1/2 -translate-x-1/2 pointer-events-none select-none flex items-baseline">
             <span
               className="text-ink tracking-tight"
               style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: "28px" }}
             >
-              Sam&apos;s Dog Grooming
+              {BRAND}
             </span>
           </div>
 
@@ -155,7 +156,7 @@ export default function NavBar() {
             className="text-ink tracking-tight"
             style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontSize: "17px" }}
           >
-            Sam&apos;s Dog Grooming
+            {BRAND}
           </span>
           <button
             onClick={() => setMenuOpen(false)}
