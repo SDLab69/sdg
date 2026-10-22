@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import NavBar from "./NavBar";
 import { todayET, todayETString, utcToETYear } from "@/lib/utils/dates";
+import { SERVICE_LABELS } from "@/lib/terms";
 import EditHouseholdModal, { type HouseholdFull, type PetFull } from "./EditHouseholdModal";
 import AddAppointmentModal from "./AddAppointmentModal";
 
@@ -19,6 +20,8 @@ type ServiceClockFull = {
   last_full_groom: string | null;
   next_brush_due: string | null;
   next_full_groom_due: string | null;
+  brush_outreach_trigger: string | null;
+  full_groom_outreach_trigger: string | null;
 };
 
 type Appointment = {
@@ -76,19 +79,7 @@ function to12hr(hhmm: string): string {
   return `${h % 12 || 12}:${m} ${h >= 12 ? "pm" : "am"}`;
 }
 
-const SERVICE_APPT_LABELS: Record<string, string> = {
-  full_groom: "Full Groom",
-  brush_nail: "Brush & Nail",
-  brush: "Brush",
-  bath: "Bath",
-  nail_trim: "Nail Trim",
-  ear_cleaning: "Ear Cleaning",
-  teeth_brushing: "Teeth Brushing",
-  deshed_treatment: "De-shed Treatment",
-  skunk_treatment: "Skunk Treatment",
-  paw_pad_trim: "Paw Trim",
-  sanitary_trim: "Sanitary Trim",
-};
+const SERVICE_APPT_LABELS = SERVICE_LABELS;
 
 function buildSchedule(
   clock: ServiceClockFull,
@@ -200,7 +191,7 @@ export default function HouseholdProfile({
             .eq("household_id", id),
           supabase
             .from("service_clocks")
-            .select("last_visit, last_full_groom, next_brush_due, next_full_groom_due")
+            .select("last_visit, last_full_groom, next_brush_due, next_full_groom_due, brush_outreach_trigger, full_groom_outreach_trigger")
             .eq("household_id", id)
             .single(),
           supabase
@@ -318,7 +309,7 @@ export default function HouseholdProfile({
             onClick={() => setShowApptModal(true)}
             className="px-3 py-1.5 text-[11px] font-bold bg-terra text-white rounded hover:opacity-90 transition-opacity"
           >
-            + Appointment
+            + Ad Hoc Service
           </button>
         </div>
       </div>
@@ -395,6 +386,7 @@ export default function HouseholdProfile({
                           onSave={(ymd) => handleClockSave("brush_nail", ymd)}
                           onCancel={() => setEditingClock(null)}
                           otherYmd={clock.next_full_groom_due}
+                          outreachYmd={clock.brush_outreach_trigger}
                         />
                         <ClockStatCard
                           kind="full_groom"
@@ -406,6 +398,7 @@ export default function HouseholdProfile({
                           onSave={(ymd) => handleClockSave("full_groom", ymd)}
                           onCancel={() => setEditingClock(null)}
                           otherYmd={clock.next_brush_due}
+                          outreachYmd={clock.full_groom_outreach_trigger}
                         />
                       </div>
 
@@ -734,6 +727,7 @@ function ClockStatCard({
   onSave,
   onCancel,
   otherYmd,
+  outreachYmd,
 }: {
   kind: "brush_nail" | "full_groom";
   label: string;
@@ -744,6 +738,7 @@ function ClockStatCard({
   onSave: (newYmd: string) => Promise<void>;
   onCancel: () => void;
   otherYmd: string | null;
+  outreachYmd?: string | null;
 }) {
   const [inputVal, setInputVal] = useState(ymd ?? "");
   const [error, setError] = useState("");
@@ -890,6 +885,15 @@ function ClockStatCard({
               }`}
             >
               {daysLabel(days)}
+            </p>
+          )}
+          {outreachYmd && (
+            <p className="text-[11px] mt-1 text-ink-2">
+              <span className="text-ink-3">Outreach </span>
+              {new Date(outreachYmd + "T00:00:00").toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              })}
             </p>
           )}
         </>
